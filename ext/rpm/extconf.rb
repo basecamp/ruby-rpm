@@ -47,7 +47,9 @@ def check_rpm
   dir_config("rpm")
   $libs = append_library($libs, 'rpmdb') if rpm_version < rpm_version([4,6,0])
   $libs = append_library($libs, 'rpm')
-  have_library('rpmbuild', 'getBuildTime')
+  have_library('rpmbuild', 'getBuildTime', "rpmbuild.h") {
+    $libs = append_library($libs, 'rpmbuild')
+  }
   if rpm_version >= rpm_version([4,6,0])
     $defs << "-D_RPM_4_4_COMPAT"
     return true
