@@ -8,7 +8,9 @@
 
 #include "private.h"
 
+#if RPM_VERSION_CODE < RPM_VERSION(4,9,0) || RPM_VERSION_CODE >= RPM_VERSION(5,0,0)
 VALUE rpm_cDB;
+#endif
 VALUE rpm_cTransaction;
 VALUE rpm_cMatchIterator;
 VALUE rpm_sCallbackData;
@@ -29,6 +31,7 @@ static ID id_total;
 static ID id_file;
 static ID id_fdt;
 
+#if RPM_VERSION_CODE < RPM_VERSION(4,9,0) || RPM_VERSION_CODE >= RPM_VERSION(5,0,0)
 static void
 db_ref(rpm_db_t* db){
 	db->ref_count++;
@@ -323,6 +326,7 @@ rpm_db_each(VALUE db)
 	check_closed(db);
 	return rpm_db_each_match(db,INT2NUM(RPMDBI_PACKAGES),Qnil);
 }
+#endif
 
 static void
 transaction_free(rpm_trans_t* trans)
@@ -334,7 +338,9 @@ transaction_free(rpm_trans_t* trans)
 #else
 	rpmtsFree(trans->ts);
 #endif
+#if RPM_VERSION_CODE < RPM_VERSION(4,9,0) || RPM_VERSION_CODE >= RPM_VERSION(5,0,0)
 	db_unref(trans->db);
+#endif
 	free(trans);
 }
 
@@ -353,6 +359,7 @@ transaction_commit(VALUE tag, VALUE ts)
 	return Qnil;
 }
 
+#if RPM_VERSION_CODE < RPM_VERSION(4,9,0) || RPM_VERSION_CODE >= RPM_VERSION(5,0,0)
 VALUE
 rpm_db_transaction(int argc, VALUE* argv, VALUE db)
 {
@@ -412,6 +419,7 @@ rpm_transaction_get_db(VALUE trans)
 {
 	return rb_ivar_get(trans, id_db);
 }
+#endif
 
 /*
  * @return [File] Get transaction script file handle
@@ -550,6 +558,39 @@ rpm_transaction_available(VALUE trans, VALUE pkg, VALUE key)
 }
 #endif /* RPMTS_AVAILABLE */
 
+static void
+mi_free(rpm_mi_t* mi)
+{
+	rpmdbFreeIterator(mi->mi);
+#if RPM_VERSION_CODE < RPM_VERSION(4,9,0) || RPM_VERSION_CODE >= RPM_VERSION(5,0,0)
+	db_unref(mi->db);
+#endif
+	free(mi);
+}
+
+#if RPM_VERSION_CODE >= RPM_VERSION(4,9,0) && RPM_VERSION_CODE < RPM_VERSION(5,0,0)
+VALUE
+rpm_transaction_init_iterator(VALUE trans, VALUE key, VALUE val)
+{
+	rpm_mi_t* mi;
+
+	if (!NIL_P(val) && TYPE(val) != T_STRING) {
+		rb_raise(rb_eTypeError, "illegal argument type");
+	}
+
+	mi = ALLOC_N(rpm_mi_t,1);
+	if ((mi->mi = rpmtsInitIterator(RPM_TRANSACTION(trans), NUM2INT(rb_Integer(key)),
+						   NIL_P(val) ? NULL : RSTRING_PTR(val),
+                           NIL_P(val) ? 0 : RSTRING_LEN(val)))){
+		return Data_Wrap_Struct(rpm_cMatchIterator, NULL, mi_free, mi);
+	}
+	free(mi);
+    /* FIXME: returning nil here is a pain; for ruby, it would be nicer
+       to return an empty array */
+	return Qnil;
+}
+#endif
+
 /*
  * Add a delete operation to the transaction
  * @param [String, Package, Dependency] pkg Package to delete
@@ -560,6 +601,7 @@ rpm_transaction_delete(VALUE trans, VALUE pkg)
 	VALUE db;
 	VALUE mi;
 
+#if RPM_VERSION_CODE < RPM_VERSION(4,9,0) || RPM_VERSION_CODE >= RPM_VERSION(5,0,0)
 	db = rb_ivar_get(trans, id_db);
 
 	if (TYPE(pkg) == T_STRING)
@@ -578,6 +620,24 @@ rpm_transaction_delete(VALUE trans, VALUE pkg)
 		rpm_mi_set_iterator_version(mi,rb_funcall(pkg,rb_intern("version"),0));
 	} else
 		rb_raise(rb_eTypeError, "illegal argument type");
+#else
+	if (TYPE(pkg) == T_STRING)
+		mi = rpm_transaction_init_iterator(trans, INT2NUM(RPMDBI_LABEL), pkg);
+	else if (rb_obj_is_kind_of(pkg, rpm_cPackage) != Qfalse) {
+		VALUE sigmd5 = rpm_package_aref(pkg,INT2NUM(RPMTAG_SIGMD5));
+		if (sigmd5 != Qnil){
+			mi = rpm_transaction_init_iterator(trans, INT2NUM(RPMTAG_SIGMD5), sigmd5);
+		}else{
+			VALUE name = rpm_package_aref(pkg,INT2NUM(RPMDBI_LABEL));
+			mi = rpm_transaction_init_iterator(trans, INT2NUM(RPMDBI_LABEL), name);
+		}
+	} else if ( rb_obj_is_kind_of(pkg, rpm_cDependency) ==Qfalse &&
+                    rb_respond_to(pkg,rb_intern("name")) && rb_respond_to(pkg,rb_intern("version"))){
+		mi = rpm_transaction_init_iterator(trans, INT2NUM(RPMDBI_LABEL),rb_funcall(pkg,rb_intern("name"),0));
+		rpm_mi_set_iterator_version(mi,rb_funcall(pkg,rb_intern("version"),0));
+	} else
+		rb_raise(rb_eTypeError, "illegal argument type");
+#endif
 
 	VALUE p;
 	while (!NIL_P(p = rpm_mi_next_iterator(mi))) {
@@ -590,7 +650,6 @@ rpm_transaction_delete(VALUE trans, VALUE pkg)
 #endif
 		}
 	}
-
 	return Qnil;
 }
 
@@ -737,8 +796,10 @@ rpm_transaction_check(VALUE trans)
 
 	rc = rpmtsCheck(RPM_TRANSACTION(trans));
 	ps = rpmtsProblems(RPM_TRANSACTION(trans));
+#if RPM_VERSION_CODE < RPM_VERSION(4,9,0) || RPM_VERSION_CODE >= RPM_VERSION(5,0,0)
 	/* get rid of duplicate problems */
 	rpmpsTrim(ps, RPMPROB_FILTER_NONE);
+#endif
 	num = rpmpsNumProblems(ps);
 
 #ifdef RPMPS_OPAQUE
@@ -1137,14 +1198,7 @@ rpm_transaction_abort(VALUE trans)
 	return Qnil; /* NOT REACHED */
 }
 
-static void
-mi_free(rpm_mi_t* mi)
-{
-	rpmdbFreeIterator(mi->mi);
-	db_unref(mi->db);
-	free(mi);
-}
-
+#if RPM_VERSION_CODE < RPM_VERSION(4,9,0) || RPM_VERSION_CODE >= RPM_VERSION(5,0,0)
 VALUE
 rpm_db_init_iterator(VALUE db, VALUE key, VALUE val)
 {
@@ -1169,6 +1223,7 @@ rpm_db_init_iterator(VALUE db, VALUE key, VALUE val)
        to return an empty array */
 	return Qnil;
 }
+#endif
 
 VALUE
 rpm_mi_next_iterator(VALUE mi)
@@ -1237,6 +1292,7 @@ rpm_mi_each(VALUE mi)
         return Qnil;
 }
 
+#if RPM_VERSION_CODE < RPM_VERSION(4,9,0) || RPM_VERSION_CODE >= RPM_VERSION(5,0,0)
 void
 Init_rpm_DB(void)
 {
@@ -1260,6 +1316,7 @@ Init_rpm_DB(void)
 	rb_undef_method(rpm_cDB, "dup");
 	rb_undef_method(rpm_cDB, "clone");
 }
+#endif
 
 void
 Init_rpm_MatchIterator(void)
@@ -1282,7 +1339,11 @@ void
 Init_rpm_transaction(void)
 {
 	rpm_cTransaction = rb_define_class_under(rpm_mRPM, "Transaction", rb_cData);
+#if RPM_VERSION_CODE < RPM_VERSION(4,9,0) || RPM_VERSION_CODE >= RPM_VERSION(5,0,0)
 	rb_define_method(rpm_cTransaction, "db", rpm_transaction_get_db, 0);
+#else
+	rb_define_method(rpm_cTransaction, "init_iterator", rpm_transaction_init_iterator, 2);
+#endif
 	rb_define_method(rpm_cTransaction, "script_file", rpm_transaction_get_script_file, 0);
 	rb_define_method(rpm_cTransaction, "script_file=", rpm_transaction_set_script_file, 1);
 	rb_define_method(rpm_cTransaction, "install", rpm_transaction_install, 2);

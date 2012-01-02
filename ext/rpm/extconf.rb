@@ -91,7 +91,7 @@ exit unless check_rpm_version
 
 check_debug
 
-HEADERS = [ "rpmlog", "rpmps", "rpmts", "rpmds" ]
+HEADERS = [ "rpmlog", "rpmps", "rpmts", "rpmds", "rpmspec" ]
 HEADERS.each { |hdr| have_header("rpm/#{hdr}.h") }
 
 $CFLAGS="#{$CFLAGS} -Wno-deprecated-declarations"

@@ -668,7 +668,10 @@ Init_rpm(void)
 	rb_define_module_function(rpm_mRPM, "verbosity", m_get_verbosity, 0);
 	rb_define_module_function(rpm_mRPM, "verbosity=", m_set_verbosity, 1);
 
+#if RPM_VERSION_CODE < RPM_VERSION(4,9,0) || RPM_VERSION_CODE >= RPM_VERSION(5,0,0)
 	Init_rpm_DB();
+	Init_rpm_MatchIterator();
+#endif
 	Init_rpm_dependency();
 	Init_rpm_file();
 	Init_rpm_package();
@@ -676,7 +679,6 @@ Init_rpm(void)
 	Init_rpm_spec();
 	Init_rpm_transaction();
 	Init_rpm_version();
-	Init_rpm_MatchIterator();
 
 	ruby_rpm_temp_format = rbtmpdir;
 	temp = ALLOCA_N(char, 32);

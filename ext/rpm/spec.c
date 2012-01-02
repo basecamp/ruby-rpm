@@ -48,8 +48,11 @@ spec_s_open(VALUE klass, VALUE filename)
 {
 #if RPM_VERSION_CODE < RPM_VERSION(4,1,0)
 	Spec rspec;
-#else
+#elif RPM_VERSION_CODE < RPM_VERSION(4,9,0) || RPM_VERSION_CODE >= RPM_VERSION(5,0,0)
 	rpmts ts = NULL;
+#else
+	rpmSpec spec = NULL;
+	rpmSpecFlags flags = (RPMSPEC_ANYARCH|RPMSPEC_FORCE);
 #endif
 
 	if (TYPE(filename) != T_STRING) {
@@ -67,7 +70,7 @@ spec_s_open(VALUE klass, VALUE filename)
 		rb_raise(rb_eRuntimeError, "specfile `%s' parsing failed", RSTRING_PTR(filename));
 	}
 	return Data_Wrap_Struct(klass, NULL, spec_free, rspec);
-#else
+#elif RPM_VERSION_CODE < RPM_VERSION(4,9,0) || RPM_VERSION_CODE >= RPM_VERSION(5,0,0)
 	ts = rpmtsCreate();
 #if RPM_VERSION_CODE < RPM_VERSION(4,4,8)
 	switch (parseSpec(ts, RSTRING_PTR(filename), "/", NULL, 0, "", NULL, 1, 1)) {
@@ -87,6 +90,12 @@ spec_s_open(VALUE klass, VALUE filename)
 		rb_raise(rb_eRuntimeError, "specfile `%s' parsing failed", RSTRING_PTR(filename));
 	}
 	return Data_Wrap_Struct(klass, NULL, ts_free, ts);
+#else
+	spec = rpmSpecParse(RSTRING_PTR(filename), flags, NULL);
+	if (spec == NULL) {
+		rb_raise(rb_eRuntimeError, "specfile `%s' parsing failed", RSTRING_PTR(filename));
+	}
+	return Data_Wrap_Struct(klass, NULL, rpmSpecFree, spec);
 #endif
 }
 
@@ -114,10 +123,15 @@ rpm_spec_get_buildroot(VALUE spec)
 	if (RPM_SPEC(spec)->rootURL) {
 		return rb_str_new2(RPM_SPEC(spec)->rootURL);
 	}
-#elif RPM_VERSION_CODE < RPM_VERSION(5,0,0)
+#elif RPM_VERSION_CODE < RPM_VERSION(4,9,0)
 	if (RPM_SPEC(spec)->buildRoot) {
 		return rb_str_new2(RPM_SPEC(spec)->buildRoot);
 	}
+#elif RPM_VERSION_CODE < RPM_VERSION(5,0,0)
+	char *buildRootURL = rpmGenPath(NULL, "%{buildroot}", NULL);
+	VALUE result = rb_str_new2(buildRootURL);
+	free(buildRootURL);
+	return result;
 #else
 	const char *buildRootURL = rpmGenPath(RPM_SPEC(spec)->rootURL, "%{?buildroot}", NULL);
 	VALUE result = rb_str_new2(buildRootURL);
@@ -133,9 +147,16 @@ rpm_spec_get_buildroot(VALUE spec)
 VALUE
 rpm_spec_get_buildsubdir(VALUE spec)
 {
+#if RPM_VERSION_CODE < RPM_VERSION(4,9,0) || RPM_VERSION_CODE >= RPM_VERSION(5,0,0)
 	if (RPM_SPEC(spec)->buildSubdir) {
 		return rb_str_new2(RPM_SPEC(spec)->buildSubdir);
 	}
+#else
+	char *buildSubDir = rpmGenPath(NULL, "%{buildsubdir}", NULL);
+	VALUE result = rb_str_new2(buildSubDir);
+	free(buildSubDir);
+	return result;
+#endif
 	return Qnil;
 }
 
@@ -148,14 +169,27 @@ rpm_spec_get_buildarchs(VALUE spec)
 	VALUE ba = rb_ivar_get(spec, id_ba);
 
 	if (NIL_P(ba)) {
-		register int i;
 		ba = rb_ary_new();
+#if RPM_VERSION_CODE < RPM_VERSION(4,9,0) || RPM_VERSION_CODE >= RPM_VERSION(5,0,0)
+		register int i;
 		for (i = 0; i < RPM_SPEC(spec)->BACount; i++) {
 			rb_ary_push(ba, rb_str_new2(RPM_SPEC(spec)->BANames[i]));
 		}
+#else
+		Header header = rpmSpecSourceHeader(RPM_SPEC(spec));
+		rpmtd archtd = rpmtdNew();
+		if (!headerGet(header,
+                       RPMTAG_BUILDARCHS, archtd, HEADERGET_MINMEM)) {
+			rpmtdFree(archtd);
+			return ba;
+		}
+		rpmtdInit(archtd);
+	        while ( rpmtdNext(archtd) != -1 ) {
+			rb_ary_push(ba, rb_str_new2(rpmtdGetString(archtd)));
+		}
+#endif
 		rb_ivar_set(spec, id_ba, ba);
 	}
-
 	return ba;
 }
 
@@ -207,15 +241,20 @@ rpm_spec_get_buildrequires(VALUE spec)
 	rpmtd flagtd = rpmtdNew();
 
 	if (NIL_P(br)) {
+#if RPM_VERSION_CODE >= RPM_VERSION(4,9,0)
+		Header header = rpmSpecSourceHeader(RPM_SPEC(spec));
+#else
+		Header header = RPM_SPEC(spec)->buildRestrictions;
+#endif
 		br = rb_ary_new();
-		if (!headerGet(RPM_SPEC(spec)->buildRestrictions,
+		if (!headerGet(header,
                        RPMTAG_REQUIRENAME, nametd, HEADERGET_MINMEM)) {
 			goto leave;
 		}
 
-		get_entry(RPM_SPEC(spec)->buildRestrictions, RPMTAG_REQUIREVERSION,
+		get_entry(header, RPMTAG_REQUIREVERSION,
 				  versiontd);
-		get_entry(RPM_SPEC(spec)->buildRestrictions, RPMTAG_REQUIREFLAGS,
+		get_entry(header, RPMTAG_REQUIREFLAGS,
 				  flagtd);
 
 		rpmtdInit(nametd);
@@ -280,16 +319,21 @@ rpm_spec_get_buildconflicts(VALUE spec)
 	rpmtd flagtd = rpmtdNew();
 
 	if (NIL_P(bc)) {
+#if RPM_VERSION_CODE >= RPM_VERSION(4,9,0)
+		Header header = rpmSpecSourceHeader(RPM_SPEC(spec));
+#else
+		Header header = RPM_SPEC(spec)->buildRestrictions;
+#endif
 		bc = rb_ary_new();
-		if (!headerGet(RPM_SPEC(spec)->buildRestrictions,
+		if (!headerGet(header,
                        RPMTAG_CONFLICTNAME, nametd, HEADERGET_MINMEM)) {
 
 			goto leave;
 		}
 
-		get_entry(RPM_SPEC(spec)->buildRestrictions, RPMTAG_CONFLICTVERSION,
+		get_entry(header, RPMTAG_CONFLICTVERSION,
 				  versiontd);
-		get_entry(RPM_SPEC(spec)->buildRestrictions, RPMTAG_CONFLICTFLAGS,
+		get_entry(header, RPMTAG_CONFLICTFLAGS,
 				  flagtd);
 
 		rpmtdInit(nametd);
@@ -314,7 +358,12 @@ rpm_spec_get_build_restrictions(VALUE spec)
 	VALUE cache = rb_ivar_get(spec, id_rest);
 
 	if (NIL_P(cache)) {
-		cache = rpm_package_new_from_header(RPM_SPEC(spec)->buildRestrictions);
+#if RPM_VERSION_CODE >= RPM_VERSION(4,9,0) && RPM_VERSION_CODE < RPM_VERSION(5,0,0)
+		Header header = rpmSpecSourceHeader(RPM_SPEC(spec));
+#else
+		Header header = RPM_SPEC(spec)->buildRestrictions;
+#endif
+		cache = rpm_package_new_from_header(header);
 		rb_ivar_set(spec, id_rest, cache);
 	}
 
@@ -330,9 +379,10 @@ rpm_spec_get_sources(VALUE spec)
 	VALUE src = rb_ivar_get(spec, id_src);
 
 	if (NIL_P(src)) {
+		src = rb_ary_new();
+#if RPM_VERSION_CODE < RPM_VERSION(4,9,0) || RPM_VERSION_CODE >= RPM_VERSION(5,0,0)
 		struct Source* s = RPM_SPEC(spec)->sources;
 
-		src = rb_ary_new();
 		while (s != NULL) {
 			VALUE obj = Qnil;
 
@@ -347,7 +397,27 @@ rpm_spec_get_sources(VALUE spec)
 			rb_ary_push(src, obj);
 			s = s->next;
 		}
+#else
+		rpmSpecSrcIter s = rpmSpecSrcIterInit(RPM_SPEC(spec));
+		rpmSpecSrc source;
+		while ((source = rpmSpecSrcIterNext(s)) != NULL) {
+			VALUE obj = Qnil;
+			rpmSourceFlags flags = rpmSpecSrcFlags(source);
+			if (flags & RPMBUILD_ISSOURCE) {
+				obj = rpm_source_new(rpmSpecSrcFilename(source, 1),
+						     rpmSpecSrcNum(source), flags & RPMBUILD_ISNO);
+			} else if (flags & RPMBUILD_ISPATCH) {
+				obj = rpm_patch_new(rpmSpecSrcFilename(source, 1),
+						    rpmSpecSrcNum(source), flags & RPMBUILD_ISNO);
+			} else if (flags & RPMBUILD_ISICON) {
+				obj = rpm_icon_new(rpmSpecSrcFilename(source, 1),
+						   rpmSpecSrcNum(source), flags & RPMBUILD_ISNO);
+			}
 
+			rb_ary_push(src, obj);
+		}
+		rpmSpecSrcIterFree(s);
+#endif
 		rb_ivar_set(spec, id_src, src);
 	}
 
@@ -363,15 +433,25 @@ rpm_spec_get_packages(VALUE spec)
 	VALUE pkg = rb_ivar_get(spec, id_pkg);
 
 	if (NIL_P(pkg)) {
+		pkg = rb_ary_new();
+#if RPM_VERSION_CODE < RPM_VERSION(4,9,0) || RPM_VERSION_CODE >= RPM_VERSION(5,0,0)
 		Package p = RPM_SPEC(spec)->packages;
 
-		pkg = rb_ary_new();
 		while (p != NULL) {
 			if (p->fileList)
 				rb_ary_push(pkg, rpm_package_new_from_header(p->header));
 			p = p->next;
 		}
-
+#else
+		rpmSpecPkgIter pi = rpmSpecPkgIterInit(RPM_SPEC(spec));
+		rpmSpecPkg p;
+		while ((p = rpmSpecPkgIterNext(pi)) != NULL) {
+			const char * fileList = rpmSpecGetSection(RPM_SPEC(spec), RPMBUILD_FILECHECK);
+			Header header = rpmSpecPkgHeader(p);
+			rb_ary_push(pkg, rpm_package_new_from_header(header));
+		}
+		rpmSpecPkgIterFree(pi);
+#endif
 		rb_ivar_set(spec, id_pkg, pkg);
 	}
 
@@ -414,11 +494,17 @@ rpm_spec_build(int argc, VALUE* argv, VALUE spec)
 
 #if RPM_VERSION_CODE < RPM_VERSION(4,1,0)
 	rc = buildSpec(RPM_SPEC(spec), flags,test);
-#else
+#elif RPM_VERSION_CODE < RPM_VERSION(4,9,0) || RPM_VERSION_CODE >= RPM_VERSION(5,0,0)
 	rpmts ts = NULL;
 	ts = rpmtsCreate();
 	rc = buildSpec(ts, RPM_SPEC(spec), flags,test);
 	ts_free(ts);
+#else
+	struct rpmBuildArguments_s buildArgs;
+	buildArgs.buildAmount = flags;
+	if (test)
+	       	buildArgs.buildAmount |= RPMBUILD_NOBUILD;
+	rc = rpmSpecBuild(RPM_SPEC(spec), &buildArgs);
 #endif
 
 	return INT2NUM(rc);
@@ -438,23 +524,27 @@ VALUE
 rpm_spec_expand_macros(VALUE spec, VALUE name)
 {
 	char  buf[BUFSIZ];
-	char* tmp;
+	char *tmp, *res;
 	VALUE val;
 
 	if (TYPE(name) != T_STRING) {
 		rb_raise(rb_eTypeError, "illegal argument type");
 	}
-
 	sprintf(buf, "%%{%s}", RSTRING_PTR(name));
+#if RPM_VERSION_CODE < RPM_VERSION(4,9,0) || RPM_VERSION_CODE >= RPM_VERSION(5,0,0)
 	tmp = strdup(buf);
 	expandMacros(RPM_SPEC(spec), RPM_SPEC(spec)->macros, buf, BUFSIZ);
+	res = buf;
+#else
+	tmp = rpmExpand(buf, NULL);
+	res = tmp;
+#endif
 	if (strcmp(tmp, buf) == 0) {
 		val = Qnil;
 	} else {
-		val = rb_str_new2(buf);
+		val = rb_str_new2(res);
 	}
 	free(tmp);
-
 	return val;
 }
 
