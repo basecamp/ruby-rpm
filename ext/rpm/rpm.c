@@ -243,11 +243,15 @@ Init_rpm(void)
 #define DEFINE_DBI(name) \
 	rb_define_const(rpm_mRPM, "DBI_"#name, INT2NUM(RPMDBI_##name))
 	DEFINE_DBI(PACKAGES);
+#if RPM_VERSION_CODE < RPM_VERSION(4,9,0) || RPM_VERSION_CODE >= RPM_VERSION(5,0,0)
 	DEFINE_DBI(DEPENDS);
+#endif
 	DEFINE_DBI(LABEL);
+#if RPM_VERSION_CODE < RPM_VERSION(4,9,0) || RPM_VERSION_CODE >= RPM_VERSION(5,0,0)
 	DEFINE_DBI(ADDED);
 	DEFINE_DBI(REMOVED);
 	DEFINE_DBI(AVAILABLE);
+#endif
 #undef DEFINE_DBI
 
 #define DEFINE_TAG(name) \
@@ -431,10 +435,14 @@ Init_rpm(void)
 	DEFINE_SENSE(LESS);
 	DEFINE_SENSE(GREATER);
 	DEFINE_SENSE(EQUAL);
+#if RPM_VERSION_CODE < RPM_VERSION(4,9,0) || RPM_VERSION_CODE >= RPM_VERSION(5,0,0)
 	DEFINE_SENSE(PROVIDES);
 	DEFINE_SENSE(CONFLICTS);
+#endif
 	DEFINE_SENSE(PREREQ);
+#if RPM_VERSION_CODE < RPM_VERSION(4,9,0) || RPM_VERSION_CODE >= RPM_VERSION(5,0,0)
 	DEFINE_SENSE(OBSOLETES);
+#endif
 	DEFINE_SENSE(INTERP);
 	DEFINE_SENSE(SCRIPT_PRE);
 	DEFINE_SENSE(SCRIPT_POST);
@@ -449,10 +457,12 @@ Init_rpm(void)
 #if RPM_VERSION_CODE < RPM_VERSION(4,1,0)
 	DEFINE_SENSE(MULTILIB);
 #endif
+#if RPM_VERSION_CODE < RPM_VERSION(4,9,0) || RPM_VERSION_CODE >= RPM_VERSION(5,0,0)
 	DEFINE_SENSE(SCRIPT_PREP);
 	DEFINE_SENSE(SCRIPT_BUILD);
 	DEFINE_SENSE(SCRIPT_INSTALL);
 	DEFINE_SENSE(SCRIPT_CLEAN);
+#endif
 	DEFINE_SENSE(RPMLIB);
 	DEFINE_SENSE(TRIGGERPREIN);
 	DEFINE_SENSE(KEYRING);
@@ -658,7 +668,10 @@ Init_rpm(void)
 	rb_define_module_function(rpm_mRPM, "verbosity", m_get_verbosity, 0);
 	rb_define_module_function(rpm_mRPM, "verbosity=", m_set_verbosity, 1);
 
+#if RPM_VERSION_CODE < RPM_VERSION(4,9,0) || RPM_VERSION_CODE >= RPM_VERSION(5,0,0)
 	Init_rpm_DB();
+	Init_rpm_MatchIterator();
+#endif
 	Init_rpm_dependency();
 	Init_rpm_file();
 	Init_rpm_package();
@@ -666,7 +679,6 @@ Init_rpm(void)
 	Init_rpm_spec();
 	Init_rpm_transaction();
 	Init_rpm_version();
-	Init_rpm_MatchIterator();
 
 	ruby_rpm_temp_format = rbtmpdir;
 	temp = ALLOCA_N(char, 32);

@@ -52,6 +52,9 @@
 #if HAVE_RPM_RPMDS_H
 #  include <rpm/rpmds.h>
 #endif
+#if HAVE_RPM_RPMSPEC_H
+#  include <rpm/rpmspec.h>
+#endif
 
 #include "ruby-rpm.h"
 
@@ -64,8 +67,10 @@
 #define RPM_MI(v) (((rpm_mi_t*)DATA_PTR((v)))->mi)
 #if RPM_VERSION_CODE < RPM_VERSION(4,1,0)
 #define RPM_SPEC(v) ((Spec)DATA_PTR((v)))
-#else
+#elif RPM_VERSION_CODE < RPM_VERSION(4,9,0) || RPM_VERSION_CODE > RPM_VERSION(5,0,0)
 #define RPM_SPEC(v) rpmtsSpec((rpmts)DATA_PTR((v)))
+#else
+#define RPM_SPEC(v) ((rpmSpec)DATA_PTR((v)))
 #endif
 #define RPM_TRANSACTION(v) (((rpm_trans_t*)DATA_PTR((v)))->ts)
 #define RPM_SCRIPT_FD(v) (((rpm_trans_t*)DATA_PTR((v)))->script_fd)
@@ -157,8 +162,10 @@ get_entry(Header hdr, rpmTag tag, rpmTagType* type, void** ptr)
 }
 #endif
 
+#if RPM_VERSION_CODE < RPM_VERSION(4,6,0) || RPM_VERSION_CODE >= RPM_VERSION(5,0,0)
 inline static void
 release_entry(rpmTagType type, void* ptr)
 {
-	ptr = headerFreeData(ptr, type);
+	ptr = headerFreeData(ptr, type);	
 }
+#endif
